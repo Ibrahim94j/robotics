@@ -1,0 +1,15 @@
+# lokale Umgebung / IDE
+.venv/
+venv/
+.idea/
+__pycache__/
+
+# Testdaten und Ergebnisse, die jeder selbst erzeugt
+synthetic/
+background.png
+car_models.json
+calibration_floor.json
+*_log.csv
+roc.png
+roc.csv
+mapping_errors.csv
