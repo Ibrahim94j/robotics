@@ -13,3 +13,14 @@ calibration_floor.json
 roc.png
 roc.csv
 mapping_errors.csv
+# Videos / generated media
+*.mp4
+*.avi
+
+# Model weights
+weights/
+*.pt
+*.pth
+
+# Python cache
+*.pyc

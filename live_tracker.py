@@ -679,6 +679,18 @@ def parse_args():
     p.add_argument("--no-display", action="store_true", help="ohne Fenster (schneller)")
     p.add_argument("--display-every", type=int, default=1, help="nur jeden N-ten Frame anzeigen")
     p.add_argument("--max-frames", type=int, default=0, help="nach N Frames beenden (0 = nie)")
+    p.add_argument(
+        "--output-video",
+        default=None,
+        help="Annotiertes Ergebnisvideo speichern"
+    )
+
+    p.add_argument(
+        "--playback-speed",
+        type=float,
+        default=1.0,
+        help="Wiedergabegeschwindigkeit für Videodateien, z.B. 1.0 normal, 0.5 halb"
+    )
     return p.parse_args()
 
 
@@ -690,16 +702,54 @@ def main():
     cap, live = open_source(args.source, args.cam_width, args.cam_height, args.cam_fps)
     publisher = None
     log_file = None
+    video_writer = None
     try:
         ok, first = cap.read()
         if not ok:
             raise SystemExit("Kein erstes Bild.")
         h0, w0 = first.shape[:2]
         video_fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
-        print(f"Quelle: {w0}x{h0} @ {video_fps:.1f} FPS ({'live' if live else 'Video'})", flush=True)
-        work_size, scale = work_size_for(first, args.work_width)
-        first_small = cv2.resize(first, work_size, interpolation=cv2.INTER_AREA)
 
+        print(
+            f"Quelle: {w0}x{h0} @ {video_fps:.1f} FPS "
+            f"({'live' if live else 'Video'})",
+            flush=True
+        )
+
+        work_size, scale = work_size_for(first, args.work_width)
+        first_small = cv2.resize(
+            first,
+            work_size,
+            interpolation=cv2.INTER_AREA
+        )
+
+        # FPS of saved annotated video
+        output_fps = (
+            float(args.cam_fps)
+            if live
+            else float(video_fps)
+        )
+
+        # Optional annotated video output
+        if args.output_video:
+            video_writer = cv2.VideoWriter(
+                args.output_video,
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                output_fps,
+                work_size
+            )
+
+            if not video_writer.isOpened():
+                raise SystemExit(
+                    f"Ausgabevideo konnte nicht geöffnet werden: "
+                    f"{args.output_video}"
+                )
+
+            print(
+                f"Ausgabevideo: {args.output_video} "
+                f"@ {output_fps:.1f} FPS",
+                flush=True
+            )
         homography = load_or_select_calibration(first, Path(args.calibration).resolve(),
                                                 args.tile_mm * args.tiles_x, args.tile_mm * args.tiles_y,
                                                 args.recalibrate)
@@ -778,6 +828,12 @@ def main():
             t0 = time.perf_counter()
             small = cv2.resize(frame, work_size, interpolation=cv2.INTER_AREA)
             foreground, blobs, scores, hsv = detect_frame(small, detector, models)
+            if frame_index < 10:
+             print(
+                f"DEBUG frame={frame_index} "
+                f"blobs={len(blobs)} "
+                f"scores={scores}"
+            )
             for track in tracks:
                 track.predict(t)
             matches = assign(tracks, blobs, scores, mapper, t, args.threshold)
@@ -807,20 +863,75 @@ def main():
                                   f"{state.dx:.1f}", f"{state.dy:.1f}", f"{state.angular_velocity:.1f}",
                                   state.u, state.v, f"{proc_ms:.2f}"])
 
-            if not args.no_display and frame_index % max(1, args.display_every) == 0:
+            need_view = (
+                video_writer is not None
+                or (
+                    not args.no_display
+                    and frame_index % max(1, args.display_every) == 0
+                )
+            )
+
+            if need_view:
                 view = small.copy()
-                draw(view, tracks, drawn, mapper, fps_estimate, proc_ms, t)
-                cv2.imshow(WINDOW, view)
-                key = cv2.waitKey(1) & 0xFF
-                if key in (ord("q"), 27):
-                    break
-                if key == ord(" ") and not live:
-                    paused = True
-                if key in (ord("b"), ord("B")) and live:
-                    background = background_from_camera(cap, work_size)
-                    cv2.imwrite(str(bg_path), background)
-                    detector = Detector(background, args.diff_threshold, args.min_area, adapt_rate=args.bg_adapt)
-            frame_index += 1
+
+                draw(
+                    view,
+                    tracks,
+                    drawn,
+                    mapper,
+                    fps_estimate,
+                    proc_ms,
+                    t
+                )
+
+                if video_writer is not None:
+                    video_writer.write(view)
+
+                if (
+                    not args.no_display
+                    and frame_index % max(1, args.display_every) == 0
+                ):
+                    cv2.imshow(WINDOW, view)
+
+                    if live:
+                        delay_ms = 1
+                    else:
+                        speed = max(args.playback_speed, 0.01)
+                        target_ms = 1000.0 / video_fps / speed
+                        elapsed_ms = (
+                            time.perf_counter() - t0
+                        ) * 1000.0
+                        delay_ms = max(
+                            1,
+                            int(target_ms - elapsed_ms)
+                        )
+
+                    key = cv2.waitKey(delay_ms) & 0xFF
+
+                    if key in (ord("q"), 27):
+                        break
+
+                    if key == ord(" ") and not live:
+                        paused = True
+
+                    if key in (ord("b"), ord("B")) and live:
+                        background = background_from_camera(
+                            cap,
+                            work_size
+                        )
+
+                        cv2.imwrite(
+                            str(bg_path),
+                            background
+                        )
+
+                        detector = Detector(
+                            background,
+                            args.diff_threshold,
+                            args.min_area,
+                            adapt_rate=args.bg_adapt
+                        )
+                frame_index += 1
             if args.max_frames and frame_index >= args.max_frames:
                 break
 
@@ -838,6 +949,12 @@ def main():
         if log_file is not None:
             log_file.close()
             print(f"Protokoll gespeichert: {args.log}", flush=True)
+        if video_writer is not None:
+            video_writer.release()
+            print(
+                f"Video gespeichert: {args.output_video}",
+                flush=True
+            )
         cv2.destroyAllWindows()
     return 0
 
