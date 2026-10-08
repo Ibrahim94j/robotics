@@ -52,6 +52,7 @@ AREA_RATIO_RANGE = (0.2, 5.0)     # erlaubte Fläche relativ zur Referenzfläche
 GATE_MM = 300.0                   # Suchradius um die vorhergesagte Position
 MAX_SPEED_MM_S = 6000.0           # 20 km/h ~ 5556 mm/s, plus Reserve
 LOST_RESET_S = 0.5                # danach wird die Spur neu initialisiert
+REACQUIRE_THRESHOLD = 0.40
 WINDOW = "Live Tracker"
 
 
@@ -364,6 +365,7 @@ class CarTrack:
         self.prev_theta = None
         self.prev_theta_time = None
         self.omega = 0.0
+        self.missed_frames = 0
 
     @property
     def active(self):
@@ -374,6 +376,7 @@ class CarTrack:
         self.heading.reset()
         self.last_seen = self.prev_theta = None
         self.omega = 0.0
+        self.missed_frames = 0
 
     def predict(self, t):
         if self.active and self.last_time is not None and t > self.last_time:
@@ -388,7 +391,16 @@ class CarTrack:
         gate = GATE_MM + MAX_SPEED_MM_S * (t - self.last_seen)
         return float(np.hypot(*(np.asarray(xy_mm) - self.kf.x[:2]))) <= gate
 
+    def mark_missed(self):
+        self.missed_frames += 1
+
+    def required_score(self, normal_threshold):
+        if not self.active or self.missed_frames > 0:
+            return max(normal_threshold, REACQUIRE_THRESHOLD)
+        return normal_threshold
+
     def correct(self, t, meas):
+        self.missed_frames = 0
         if not self.active:
             self.kf.reset((meas.x, meas.y))
         else:
@@ -463,10 +475,21 @@ def assign(tracks, blobs, scores, mapper, t, threshold):
     if not blobs:
         return {}
     centres_mm = mapper.height_corrected(mapper.to_mm([[b.cx, b.cy] for b in blobs]))
-    pairs = [(scores[ci][bi], ci, bi)
-             for ci, track in enumerate(tracks) for bi in range(len(blobs))
-             if scores[ci][bi] >= threshold and track.gate_ok(centres_mm[bi], t)]
-    pairs.sort(reverse=True)
+    pairs = []
+    for ci, track in enumerate(tracks):
+        required = track.required_score(threshold)
+
+        for bi in range(len(blobs)):
+            score = scores[ci][bi]
+
+            if score < required:
+                continue
+
+            if not track.gate_ok(centres_mm[bi], t):
+                continue
+
+            pairs.append((score, ci, bi))
+        pairs.sort(reverse=True)
     used_cars, used_blobs, result = set(), set(), {}
     for score, ci, bi in pairs:
         if ci in used_cars or bi in used_blobs:
@@ -492,8 +515,8 @@ def recover_merged(tracks, blobs, matches, hsv, mapper, t, threshold):
             part_j, part_i = parts
             score_i = blob_score(track.model, part_i, blob_histogram(hsv, part_i))
             centre_i = mapper.height_corrected(mapper.to_mm([[part_i.cx, part_i.cy]])[0])
-            if score_i < threshold or not track.gate_ok(centre_i, t):
-                continue
+            if score_i < track.required_score(threshold) or not track.gate_ok(centre_i, t):
+                 continue
             blobs.extend([part_j, part_i])
             matches[cj] = (len(blobs) - 2, score_j)
             matches[ci] = (len(blobs) - 1, score_i)
@@ -848,6 +871,7 @@ def main():
                     state = track.state(timestamp_us, meas, theta)
                     drawn[ci] = (blobs[bi], state)
                 else:
+                    track.mark_missed()
                     state, score = CarState.missing(timestamp_us, track.model.name), 0.0
                 states.append((state, ci in matches, score))
             detector.adapt(small, foreground)
