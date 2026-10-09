@@ -1,26 +1,53 @@
-# lokale Umgebung / IDE
+# Local environment / IDE
 .venv/
 venv/
 .idea/
 __pycache__/
+*.pyc
 
-# Testdaten und Ergebnisse, die jeder selbst erzeugt
+# Generated / temporary datasets
 synthetic/
-background.png
-car_models.json
-calibration_floor.json
-*_log.csv
-roc.png
-roc.csv
 mapping_errors.csv
-# Videos / generated media
-*.mp4
-*.avi
 
 # Model weights
 weights/
 *.pt
 *.pth
 
-# Python cache
-*.pyc
+# Generated videos and logs are ignored by default
+*.mp4
+*.avi
+*_log.csv
+
+# Runtime configuration ignored by default
+background.png
+car_models.json
+calibration_floor.json
+
+# Old ROC outputs
+roc.png
+roc.csv
+
+# --------------------------------------------------
+# Final files that SHOULD be committed
+# --------------------------------------------------
+
+# Final real-video demo
+!test1.mp4
+!test1_final_small.mp4
+!test1_final_log.csv
+
+# Runtime configuration used for final demo
+!background.png
+!car_models.json
+!calibration_floor.json
+
+# Final ROC evaluation
+!roc_eval/
+!roc_eval/background.png
+!roc_eval/calibration_floor.json
+!roc_eval/car_models.json
+!roc_eval/roc_final.png
+!roc_eval/roc_final.csv
+!roc_eval/synthetic.mp4
+!roc_eval/synthetic_truth.csv

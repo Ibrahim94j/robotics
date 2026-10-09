@@ -1,0 +1,3 @@
+car_id,t_start_s,t_end_s,x_mm,y_mm,theta_deg
+Red Racer,9.5,12.0,494.19,530.38,312.34
+Green Hornet,9.5,12.0,1265.13,762.78,40.17
